@@ -1,0 +1,5 @@
+# The git ignore file for the titanic Exploratory modelling project
+
+Exploratory_Modelling.py
+Hello_World_MLA.py
+Output/*
