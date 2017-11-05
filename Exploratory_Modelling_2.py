@@ -9,14 +9,21 @@ import seaborn as sns
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.externals import joblib
 from sklearn.model_selection import RepeatedStratifiedKFold
+from sklearn import tree
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn import preprocessing
+import _pickle as cPickle
+from sklearn.tree import DecisionTreeClassifier
+from PIL import Image
+import subprocess
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
 def read_in_data():
 
-    Path_To_Training_Data = os.path.join(os.getcwd(), "Data/Titanic/Titanic_Training.csv")
-    Path_To_Testing_Data = os.path.join(os.getcwd(), "Data/Titanic/Titanic_Testing.csv")
-    Path_To_Other_Data = os.path.join(os.getcwd(), "Data/Titanic/Titanic_Gender_Submission.csv")
+    Path_To_Training_Data = os.path.join(os.getcwd(), "titanic_modelling/Data/Titanic/Titanic_Training.csv")
+    Path_To_Testing_Data = os.path.join(os.getcwd(), "titanic_modelling/Data/Titanic/Titanic_Testing.csv")
+    Path_To_Other_Data = os.path.join(os.getcwd(), "titanic_modelling/Data/Titanic/Titanic_Gender_Submission.csv")
 
     # Read the data into a pandas dataset
     Training_Dataset = pd.read_csv(Path_To_Training_Data, header=0)
@@ -33,8 +40,8 @@ def read_in_data():
     All_Data['Pclass'] = All_Data['Pclass'].map({1: 'First', 2: 'Second', 3: 'Third'})
 
     # Fill missing values in the Survived column and convert to string format
-    All_Data['Survived'] = All_Data['Survived'].fillna(2.0)
     All_Data['Survived'] = All_Data['Survived'].map({1.0: 'Survive', 0.0: 'Died', 2.0: 'Unknown'})
+    All_Data['Survived'] = All_Data['Survived'].fillna(2.0)
 
     # Alter the class variable to be a string
     Training_Dataset['Pclass'] = Training_Dataset['Pclass'].map({1: 'First', 2: 'Second', 3: 'Third'})
@@ -69,16 +76,24 @@ def create_new_variables(data):
     categories = pd.cut(data['Age'], bins, labels=group_names)
     data['Age_cats'] = pd.cut(data['Age'], bins, labels=group_names)
 
+    mr_title_list = ['Mr.', 'Rev.', 'Capt.', 'Col.', 'Sir.', 'Major.', 'Don.', 'Jonkheer.', 'Dr.']
+    mrs_title_list = ['Mrs.', 'Lady.', 'Countess.', 'Dona.']
+    miss_title_list = ['Miss.', 'Ms.', 'Mlle.']
+
     for i in range(0, len(data)):
 
-        if 'Mr.' in data.loc[i, 'Name']:
+        if any(x in data.loc[i, 'Name'] for x in mr_title_list):
             data.loc[i, 'Name_Title'] = 'Mr'
-        elif 'Mrs.' in data.loc[i, 'Name']:
+
+        elif any(x in data.loc[i, 'Name'] for x in mrs_title_list):
             data.loc[i, 'Name_Title'] = 'Mrs'
-        elif 'Miss.' in data.loc[i, 'Name']:
+
+        elif any(x in data.loc[i, 'Name'] for x in miss_title_list):
             data.loc[i, 'Name_Title'] = 'Miss'
+
         elif 'Master.' in data.loc[i, 'Name']:
             data.loc[i, 'Name_Title'] = 'Master'
+
         else:
             data.loc[i, 'Name_Title'] = np.nan
 
@@ -96,24 +111,43 @@ def create_new_variables(data):
     data['Family_Size'] = data['SibSp'] + data['Parch'] + 1
     data['Family_Size'] = data['Family_Size'].astype('category')
 
+    # Creates a new variable which counts the freq of each ticket
+    data['Ticket_P_Size'] = data.groupby('Ticket')['Ticket'].transform('count')
+
+    # Create an average fare for all the people on that ticket
+    data["Ave_Fare"] = data["Fare"] / data["Ticket_P_Size"]
+
     return data
 
-def create_model(x_train, y_train, model_save_loc, hit, no_hit):
+def create_model(x_train, y_train, model_save_loc):
 
-    cw = {0: hit, 1: no_hit}
+    cw_np = compute_class_weight('balanced', np.unique(y_train), y_train.as_matrix().flatten())
+    cw_dict = {0: cw_np[0], 1: cw_np[1]}
 
-    clf = RandomForestClassifier(n_estimators=1000, criterion='gini', oob_score=True, max_features='auto', class_weight=cw)
+    clf = RandomForestClassifier(n_estimators=10, criterion='gini', max_features='auto', class_weight=cw_dict)
 
-    model = clf.fit(x_train, y_train)
+    y_train_alt = np.ravel(y_train)
+    clf = clf.fit(x_train, y_train_alt)
 
     # Save the model
-    joblib.dump(model, model_save_loc)
+    with open(model_save_loc, 'wb') as f:
+        cPickle.dump(clf, f)
 
-def evaluate_model(x_test, y_test, imp_plot_save_loc, model_save_loc):
+def evaluate_model(x_test, y_test, imp_plot_save_loc, model_save_loc, tree_save_location, feature_vars):
 
-    model = joblib.load(model_save_loc)
+    with open(model_save_loc, 'rb') as f:
+        model = cPickle.load(f)
 
-    oob_score = model.oob_score_
+    i_tree = 0
+    for tree_in_forest in model.estimators_:
+        with open(tree_save_location, 'w') as my_file:
+            my_file = tree.export_graphviz(tree_in_forest, out_file = my_file)
+        i_tree = i_tree + 1
+
+    tree_file_name = tree_save_location.split('.')[0]
+    new_tree_file_name = tree_file_name + '.png'
+    subprocess.call(['dot', '-Tpng', tree_save_location, '-o', new_tree_file_name])
+
     feature_imp = model.feature_importances_
 
     # Plot the feature importances of the forest
@@ -122,15 +156,19 @@ def evaluate_model(x_test, y_test, imp_plot_save_loc, model_save_loc):
     plt.barh(range(x_test.shape[1]), feature_imp,
            color="r", align="center")
     plt.yticks(range(x_test.shape[1]), x_test)
-    #plt.show()
+    plt.xlabel("Relative Importance")
     plt.savefig(imp_plot_save_loc)
+    plt.close()
 
     preds = model.predict(x_test)
-    conf_mat = pd.crosstab(y_test, preds, rownames=['actual'], colnames=['preds'], normalize=True)
+    y_test_mat = y_test.as_matrix().reshape(preds.shape)
 
-    return conf_mat, oob_score, feature_imp
+    #print(preds.shape, y_test)
+    conf_mat = pd.crosstab(y_test_mat, preds, rownames=['actual'], colnames=['preds'], normalize=True)
 
-def apply_cv(df, target_var, feature_vars, n_folds, imp_plot_save_loc, model_save_loc):
+    return conf_mat, feature_imp
+
+def apply_cv(df, target_var, feature_vars, n_folds, imp_plot_save_loc, model_save_loc, tree_plot_save_loc):
 
     feature_vars.append(target_var)
     df_select = df[feature_vars]
@@ -145,33 +183,99 @@ def apply_cv(df, target_var, feature_vars, n_folds, imp_plot_save_loc, model_sav
         df_select[new_var] = df_select[variable].cat.codes
         features = pd.concat([features, df_select[new_var]], axis=1)
 
-    no_hit = len(df_select.ix[df_select[target_var] == 0]) / len(df_select)
-    hit = len(df_select.ix[df_select[target_var] == 1]) / len(df_select)
-
     rskf = RepeatedStratifiedKFold(n_splits=n_folds, n_repeats=10)
-    oob_scores = []
 
     features_np = features.as_matrix()
 
     for train_index, test_index in rskf.split(features_np, y):
         x_train, x_test = features_np[train_index], features_np[test_index]
         y_train, y_test = y[train_index], y[test_index]
-        create_model(pd.DataFrame(x_train, columns=feature_vars), pd.DataFrame(y_train, columns=[target_var]), model_save_loc, hit, no_hit)
-        cnf_mat, oob_score, f_imp = evaluate_model(pd.DataFrame(x_test, columns=feature_vars), pd.DataFrame(y_test, columns=[target_var]), imp_plot_save_loc, model_save_loc)
-        oob_scores.append(oob_score)
+        create_model(pd.DataFrame(x_train, columns=feature_vars), pd.DataFrame(y_train, columns=[target_var]), model_save_loc)
+        cnf_mat, f_imp = evaluate_model(pd.DataFrame(x_test, columns=feature_vars), pd.DataFrame(y_test, columns=[target_var]), imp_plot_save_loc, model_save_loc, tree_plot_save_loc, feature_vars)
 
-    oob_scores_np = np.asarray(oob_scores)
-    mean_oob = np.mean(oob_scores_np)
-    print(oob_scores)
+    acc = cnf_mat.iloc[0,0] + cnf_mat.iloc[1,1]
 
-    return mean_oob
+    return cnf_mat, f_imp, acc
+
+def plot_fare_density(data, fares_dens_plot_save_loc):
+
+    all_data = data.ix[(data["Name_Title"] == "Mr") & (data["Pclass"] == 'First')]
+
+    all_data_surv = all_data.ix[all_data["Survived"] == "Survive"]
+    all_data_died = all_data.ix[all_data["Survived"] == "Died"]
+    all_data_unknown = all_data.ix[all_data["Survived"] == 2]
+
+    plt.figure()
+    sns.kdeplot(all_data_surv["Fare"].values, shade=True, label="Survived")
+    sns.kdeplot(all_data_died["Fare"].values, shade=True, label="Died")
+    sns.kdeplot(all_data_unknown["Fare"].values, shade=True, label="Unknown")
+    plt.xlabel("Fare (£)")
+    plt.ylabel("Norm. Density")
+    plt.title("Dist. of fare, men in 1st class")
+    plt.savefig(fares_dens_plot_save_loc)
+    plt.close()
+
+def plot_ticket_p_size(data, save_loc):
+
+    all_data = data.ix[(data["Name_Title"] == "Mr") & (data["Pclass"] == 'First')]
+    all_data["Ticket_P_Size"].astype('category')
+
+    all_data_surv = all_data.ix[all_data["Survived"] == "Survive"]
+    all_data_died = all_data.ix[all_data["Survived"] == "Died"]
+    all_data_unknown = all_data.ix[all_data["Survived"] == 2]
+
+    plt.figure()
+    sns.countplot(x='Ticket_P_Size', hue="Survived", data=all_data)
+    plt.xlabel("Party Size")
+    plt.ylabel("Count")
+    plt.title("Ticket Party Size of men in First Class")
+    plt.savefig(save_loc)
+    plt.close()
+
+def missing_fare(data):
+
+    null_data = data[data["Ave_Fare"].isnull()]
+    missing_data_values = []
+    new_fares = []
+    loc_missing_values = null_data.index.values.tolist()
+
+    for index, value in null_data.iterrows():
+        ticket_value = value['Ticket']
+        pclass_value = value['Pclass_Name_Title']
+        family_value = value['Family_Size']
+        missing_data_values.append([ticket_value, pclass_value, family_value])
+
+    for ticket_value, pclass_value, family_value in missing_data_values:
+        data_comparison = data.ix[(data['Pclass_Name_Title'] == pclass_value) & (data['Family_Size'] == family_value) & (data['Ticket'] != ticket_value)]
+        calc_fare = data_comparison["Ave_Fare"].median()
+        new_fares.append(calc_fare)
+
+    for index, value in zip(loc_missing_values, new_fares):
+        data.at[index, "Ave_Fare"] = value
+
+    return data
+
+def processing_data(data, cols):
+
+    new_data = preprocessing.scale(data[cols])
+
+    for i, col in enumerate(cols):
+        data[col] = new_data[:,i]
+
+    calc_corr = data[cols[0]].corr(data[cols[1]])
+
+    return data, calc_corr
 
 if __name__ == '__main__':
 
     #Set the paths to the data
-    Path_To_Output = os.path.join(os.getcwd(), "Output/")
-    model_save_loc = os.path.join(os.getcwd(), "Output", "model.pk1")
-    imp_plot_save_loc = os.path.join(os.getcwd(), "Output", "feature_vars_imp_plot.jpg")
+    Path_To_Output = os.path.join(os.getcwd(), "titanic_modelling/Output/")
+    model_save_loc = os.path.join(os.getcwd(), "titanic_modelling/Output", "model.pk1")
+    imp_plot_save_loc = os.path.join(os.getcwd(), "titanic_modelling/Output", "feature_vars_imp_plot.jpg")
+    tree_plot_save_loc = os.path.join(os.getcwd(), "titanic_modelling/Output/", "tree_visualisation.dot")
+    fares_dens_plot_save_loc = os.path.join(os.getcwd(), "titanic_modelling/Output/", "fare_density_plot.jpg")
+    bar_p_size_loc = os.path.join(os.getcwd(), "titanic_modelling/Output/", "ticket_p_size_survivability.jpg")
+
 
     data_list = read_in_data()
     n_folds = 3
@@ -181,11 +285,18 @@ if __name__ == '__main__':
     test_data = create_new_variables(data_list[2])
 
     target_var = "Survived"
-    feature_vars = ["Pclass", "Name_Title", "Family_Size"]
+    feature_vars = ["Name_Title", "Ticket_P_Size", "Ave_Fare"]
 
-    #create_model(train_data, feature_vars, target_var, model_save_loc)
-    #conf_mat, oob_score, feature_imp = evaluate_model(train_data, target_var, feature_vars, imp_plot_save_loc, model_save_loc)
+    all_data = missing_fare(all_data)
+    train_data = missing_fare(train_data)
+    test_data = missing_fare(test_data)
 
-    #print(conf_mat, oob_score, feature_imp)
-    output = apply_cv(train_data, target_var, feature_vars, n_folds, imp_plot_save_loc, model_save_loc)
-    print(output)
+    returned_data, corr = processing_data(all_data, ["Ave_Fare", "Ticket_P_Size"])
+    returned_data, corr = processing_data(train_data, ["Ave_Fare", "Ticket_P_Size"])
+    returned_data, corr = processing_data(test_data, ["Ave_Fare", "Ticket_P_Size"])
+
+
+    confusion_matrix, feature_importances, accuracy = apply_cv(train_data, target_var, feature_vars, n_folds, imp_plot_save_loc, model_save_loc, tree_plot_save_loc)
+    print(confusion_matrix, accuracy, feature_importances)
+    #plot_fare_density(all_data, fares_dens_plot_save_loc)
+    #plot_ticket_p_size(all_data, bar_p_size_loc)
