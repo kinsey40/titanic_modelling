@@ -21,9 +21,9 @@ pd.options.mode.chained_assignment = None  # default='warn'
 
 def read_in_data():
 
-    Path_To_Training_Data = os.path.join(os.getcwd(), "titanic_modelling/Data/Titanic/Titanic_Training.csv")
-    Path_To_Testing_Data = os.path.join(os.getcwd(), "titanic_modelling/Data/Titanic/Titanic_Testing.csv")
-    Path_To_Other_Data = os.path.join(os.getcwd(), "titanic_modelling/Data/Titanic/Titanic_Gender_Submission.csv")
+    Path_To_Training_Data = os.path.join(os.getcwd(), "Data/Titanic/Titanic_Training.csv")
+    Path_To_Testing_Data = os.path.join(os.getcwd(), "Data/Titanic/Titanic_Testing.csv")
+    Path_To_Other_Data = os.path.join(os.getcwd(), "Data/Titanic/Titanic_Gender_Submission.csv")
 
     # Read the data into a pandas dataset
     Training_Dataset = pd.read_csv(Path_To_Training_Data, header=0)
@@ -168,6 +168,37 @@ def evaluate_model(x_test, y_test, imp_plot_save_loc, model_save_loc, tree_save_
 
     return conf_mat, feature_imp
 
+def evaluate_model_for_test(df, model_save_loc, feature_vars, target_var, csv_save_loc):
+
+    feature_vars.append(target_var)
+    df_select = df[feature_vars]
+    feature_vars.remove(target_var)
+
+    y, _ = pd.factorize(df_select[target_var])
+    features = pd.DataFrame()
+
+    for variable in feature_vars:
+        new_var = variable + "_cat"
+        df_select[variable] = df_select[variable].astype('category')
+        df_select[new_var] = df_select[variable].cat.codes
+        features = pd.concat([features, df_select[new_var]], axis=1)
+
+    features_np = features.as_matrix()
+
+    with open(model_save_loc, 'rb') as f:
+        model = cPickle.load(f)
+
+    preds = model.predict(pd.DataFrame(features_np))
+
+    df["Survived"] = preds
+    df_selected = df[["PassengerId", "Survived"]]
+
+    df_selected.to_csv(csv_save_loc, index=False)
+    print(df_selected["Survived"].sum(), len(df_selected) - df_selected["Survived"].sum())
+
+
+    return preds
+
 def apply_cv(df, target_var, feature_vars, n_folds, imp_plot_save_loc, model_save_loc, tree_plot_save_loc):
 
     feature_vars.append(target_var)
@@ -269,23 +300,23 @@ def processing_data(data, cols):
 if __name__ == '__main__':
 
     #Set the paths to the data
-    Path_To_Output = os.path.join(os.getcwd(), "titanic_modelling/Output/")
-    model_save_loc = os.path.join(os.getcwd(), "titanic_modelling/Output", "model.pk1")
-    imp_plot_save_loc = os.path.join(os.getcwd(), "titanic_modelling/Output", "feature_vars_imp_plot.jpg")
-    tree_plot_save_loc = os.path.join(os.getcwd(), "titanic_modelling/Output/", "tree_visualisation.dot")
-    fares_dens_plot_save_loc = os.path.join(os.getcwd(), "titanic_modelling/Output/", "fare_density_plot.jpg")
-    bar_p_size_loc = os.path.join(os.getcwd(), "titanic_modelling/Output/", "ticket_p_size_survivability.jpg")
-
+    Path_To_Output = os.path.join(os.getcwd(), "Output/")
+    model_save_loc = os.path.join(os.getcwd(), "Output", "model.pk1")
+    imp_plot_save_loc = os.path.join(os.getcwd(), "Output", "feature_vars_imp_plot.jpg")
+    tree_plot_save_loc = os.path.join(os.getcwd(), "Output/", "tree_visualisation.dot")
+    fares_dens_plot_save_loc = os.path.join(os.getcwd(), "Output/", "fare_density_plot.jpg")
+    bar_p_size_loc = os.path.join(os.getcwd(), "Output/", "ticket_p_size_survivability.jpg")
+    csv_export_save_loc = os.path.join(os.getcwd(), "Output/submission_file_12112017_1.csv")
 
     data_list = read_in_data()
-    n_folds = 3
+    n_folds = 4
 
     all_data = create_new_variables(data_list[0])
     train_data = create_new_variables(data_list[1])
     test_data = create_new_variables(data_list[2])
 
     target_var = "Survived"
-    feature_vars = ["Name_Title", "Ticket_P_Size", "Ave_Fare"]
+    feature_vars = ["Name_Title", "Ticket_P_Size", "Ave_Fare", "Pclass"]
 
     all_data = missing_fare(all_data)
     train_data = missing_fare(train_data)
@@ -298,5 +329,8 @@ if __name__ == '__main__':
 
     confusion_matrix, feature_importances, accuracy = apply_cv(train_data, target_var, feature_vars, n_folds, imp_plot_save_loc, model_save_loc, tree_plot_save_loc)
     print(confusion_matrix, accuracy, feature_importances)
+    test_preds = evaluate_model_for_test(test_data, model_save_loc, feature_vars, target_var, csv_export_save_loc)
+
+
     #plot_fare_density(all_data, fares_dens_plot_save_loc)
     #plot_ticket_p_size(all_data, bar_p_size_loc)
