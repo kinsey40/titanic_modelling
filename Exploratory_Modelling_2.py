@@ -124,7 +124,7 @@ def create_model(x_train, y_train, model_save_loc):
     cw_np = compute_class_weight('balanced', np.unique(y_train), y_train.as_matrix().flatten())
     cw_dict = {0: cw_np[0], 1: cw_np[1]}
 
-    clf = RandomForestClassifier(n_estimators=10, criterion='gini', max_features='auto', class_weight=cw_dict)
+    clf = RandomForestClassifier(n_estimators=1000, criterion='gini', max_features='auto', class_weight=cw_dict)
 
     y_train_alt = np.ravel(y_train)
     clf = clf.fit(x_train, y_train_alt)
@@ -309,14 +309,14 @@ if __name__ == '__main__':
     csv_export_save_loc = os.path.join(os.getcwd(), "Output/submission_file_12112017_1.csv")
 
     data_list = read_in_data()
-    n_folds = 4
+    n_folds = 3
 
     all_data = create_new_variables(data_list[0])
     train_data = create_new_variables(data_list[1])
     test_data = create_new_variables(data_list[2])
 
     target_var = "Survived"
-    feature_vars = ["Name_Title", "Ticket_P_Size", "Ave_Fare", "Pclass"]
+    feature_vars = ["Name_Title", "Ticket_P_Size", "Pclass"]
 
     all_data = missing_fare(all_data)
     train_data = missing_fare(train_data)
